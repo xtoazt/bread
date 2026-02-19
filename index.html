@@ -1,143 +1,125 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>bread launcher.</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0a0a0a;
-            color: #ffffff;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .container {
-            text-align: center;
-            padding: 2rem;
-        }
-        
-        h1 {
-            font-size: 2.5rem;
-            margin-bottom: 3rem;
-            font-weight: 300;
-            letter-spacing: -0.02em;
-        }
-        
-        .button-grid {
-            display: grid;
-            gap: 1.5rem;
-            max-width: 400px;
-            margin: 0 auto;
-        }
-        
-        .launcher-btn {
-            padding: 1.5rem 2rem;
-            background: #1a1a1a;
-            border: 1px solid #333;
-            color: #ffffff;
-            text-decoration: none;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            transition: all 0.2s ease;
-            cursor: pointer;
-            display: block;
-        }
-        
-        .launcher-btn:hover {
-            background: #2a2a2a;
-            border-color: #555;
-            transform: translateY(-2px);
-        }
-        
-        .iframe-container {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #000;
-            z-index: 1000;
-        }
-        
-        .iframe-header {
-            background: #1a1a1a;
-            padding: 1rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #333;
-        }
-        
-        .close-btn {
-            background: #ff4444;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        
-        .proxy-frame {
-            width: 100%;
-            height: calc(100vh - 60px);
-            border: none;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>bread launcher.</h1>
-        <div class="button-grid">
-            <button class="launcher-btn" onclick="launchProxy('http://ev.io/')">ev.io</button>
-            <button class="launcher-btn" onclick="launchProxy('http://deadshot.io/')">deadshot.io</button>
-            <button class="launcher-btn" onclick="launchProxy('https://152.ip.nowgg.fun')">now.gg</button>
-        </div>
-    </div>
-    
-    <div id="iframeContainer" class="iframe-container">
-        <div class="iframe-header">
-            <span id="siteTitle"></span>
-            <button class="close-btn" onclick="closeProxy()">Close</button>
-        </div>
-        <iframe id="proxyFrame" class="proxy-frame"></iframe>
-    </div>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bread launcher</title>
 
-    <script>
-        function launchProxy(url) {
-            const container = document.getElementById('iframeContainer');
-            const frame = document.getElementById('proxyFrame');
-            const title = document.getElementById('siteTitle');
-            
-            // Extract site name for display
-            const siteName = url.match(/:\/\/([^\/]+)/)?.[1] || url;
-            title.textContent = siteName;
-            
-            // Use our proxy endpoint
-            frame.src = `/proxy?url=${encodeURIComponent(url)}`;
-            container.style.display = 'block';
-        }
-        
-        function closeProxy() {
-            document.getElementById('iframeContainer').style.display = 'none';
-            document.getElementById('proxyFrame').src = '';
-        }
-        
-        // Close on escape key
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeProxy();
-        });
-    </script>
+<style>
+    body {
+        margin: 0;
+        font-family: Inter, system-ui, sans-serif;
+        background: #0d0d0d;
+        color: white;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+    }
+
+    .card {
+        background: #141414;
+        padding: 2.5rem;
+        border-radius: 16px;
+        width: 90%;
+        max-width: 420px;
+        box-shadow: 0 0 40px rgba(0,0,0,0.4);
+        text-align: center;
+    }
+
+    h1 {
+        font-weight: 600;
+        margin-bottom: 2rem;
+        font-size: 2rem;
+    }
+
+    .btn {
+        width: 100%;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        background: #1f1f1f;
+        border: 1px solid #333;
+        border-radius: 10px;
+        color: white;
+        font-size: 1.1rem;
+        cursor: pointer;
+        transition: 0.2s;
+    }
+
+    .btn:hover {
+        background: #2a2a2a;
+        border-color: #555;
+        transform: translateY(-2px);
+    }
+
+    /* Fullscreen iframe */
+    #frameWrap {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: black;
+        z-index: 999;
+    }
+
+    #frameWrap header {
+        background: #111;
+        padding: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #333;
+    }
+
+    #frameWrap iframe {
+        width: 100%;
+        height: calc(100vh - 60px);
+        border: none;
+    }
+
+    .close {
+        background: #ff3b3b;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        cursor: pointer;
+        color: white;
+    }
+</style>
+</head>
+
+<body>
+
+<div class="card">
+    <h1>bread launcher</h1>
+    <button class="btn" onclick="launch('http://ev.io/')">ev.io</button>
+    <button class="btn" onclick="launch('http://deadshot.io/')">deadshot.io</button>
+    <button class="btn" onclick="launch('https://152.ip.nowgg.fun')">now.gg</button>
+</div>
+
+<div id="frameWrap">
+    <header>
+        <span id="title"></span>
+        <button class="close" onclick="closeFrame()">Close</button>
+    </header>
+    <iframe id="frame"></iframe>
+</div>
+
+<script>
+function launch(url) {
+    document.getElementById("title").textContent = new URL(url).hostname;
+    document.getElementById("frame").src = "/proxy?url=" + encodeURIComponent(url);
+    document.getElementById("frameWrap").style.display = "block";
+}
+
+function closeFrame() {
+    document.getElementById("frameWrap").style.display = "none";
+    document.getElementById("frame").src = "";
+}
+
+document.addEventListener("keydown", e => {
+    if (e.key === "Escape") closeFrame();
+});
+</script>
+
 </body>
 </html>
