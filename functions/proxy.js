@@ -1,143 +1,123 @@
-export async function onRequestGet(context) {
-    const url = new URL(context.request.url);
-    const targetUrl = url.searchParams.get('url');
+const AD_RULES = [
+  'doubleclick.net', 'googlesyndication.com', 'google-analytics.com',
+  'facebook.com/tr', 'amazon-adsystem.com', 'taboola.com', 'outbrain.com',
+  '.ad', '.ads', '.advertisement', '#ad', '#ads', '[data-ad]', '/ads/', '/tracking'
+];
+
+function shouldBlock(url) {
+  try {
+    const domain = new URL(url).hostname.toLowerCase();
+    return AD_RULES.some(rule => domain.includes(rule) || url.toLowerCase().includes(rule));
+  } catch { return false; }
+}
+
+function injectAdBlock(html) {
+  const css = `<style>${AD_RULES.join(',')} {display:none!important;}</style>`;
+  const js = `<script>
+    const adSelectors = ${JSON.stringify(AD_RULES)};
+    new MutationObserver(() => 
+      document.querySelectorAll(adSelectors.join(',')).forEach(el => el.remove())
+    ).observe(document, {childList:true,subtree:true});
+    document.querySelectorAll(adSelectors.join(',')).forEach(el => el.remove());
+  </script>`;
+  return html.replace(/<head>/i, `$&${css}`).replace('</body>', `${js}</body>`);
+}
+
+export async function onRequestGet({request}) {
+  const url = new URL(request.url);
+  const target = url.searchParams.get('url');
+  
+  if (!target) return new Response('Missing URL', {status: 400});
+  if (shouldBlock(target)) return new Response('Blocked', {status: 204});
+  
+  try {
+    const res = await fetch(target, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      }
+    });
     
-    if (!targetUrl) {
-        return new Response(JSON.stringify({ error: 'Missing URL parameter' }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' }
-        });
-    }
+    if (!res.ok) return new Response(`Error ${res.status}`, {status: res.status});
     
-    // Validate URL
-    try {
-        new URL(targetUrl);
-    } catch {
-        return new Response(JSON.stringify({ error: 'Invalid URL' }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' }
-        });
-    }
+    const contentType = res.headers.get('content-type') || '';
     
-    try {
-        const response = await fetch(targetUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            }
-        });
-        
-        if (!response.ok) {
-            return new Response(JSON.stringify({ 
-                error: `Target server responded with ${response.status}`,
-                status: response.status 
-            }), {
-                status: response.status,
-                headers: { 'Content-Type': 'application/json' }
-            });
+    if (contentType.includes('text/html')) {
+      let html = await res.text();
+      const base = new URL(target).origin;
+      
+      // Rewrite URLs to stay in proxy
+      html = html.replace(
+        /(href|src|action|srcset|data-src)=["']([^"']+)["']/g,
+        (match, attr, value) => {
+          if (value.startsWith('http') || value.startsWith('//') || value.startsWith('data:')) {
+            return match;
+          }
+          return `${attr}="${base}${value.startsWith('/') ? '' : '/'}${value}"`;
         }
-        
-        const contentType = response.headers.get('content-type') || 'text/html';
-        let body = await response.text();
-        
-        if (contentType.includes('text/html')) {
-            const targetOrigin = new URL(targetUrl).origin;
-            
-            // Better URL rewriting
-            body = body.replace(
-                new RegExp(`(href|src|action|srcset|data-src)=["']([^"']+)["']`, 'g'),
-                (match, attr, value) => {
-                    if (value.startsWith('http') || value.startsWith('//') || value.startsWith('data:')) {
-                        return match;
-                    }
-                    return `${attr}="${targetOrigin}${value.startsWith('/') ? '' : '/'}${value}"`;
-                }
-            );
-            
-            // Add base tag
-            body = body.replace(/<head[^>]*>/i, `$&<base href="${targetOrigin}/">`);
-            
-            // Enhanced proxy script
-            body = body.replace('</head>', `
-                <script>
-                    (function() {
-                        const targetOrigin = "${targetOrigin}";
-                        
-                        // Handle all navigation
-                        document.addEventListener('click', function(e) {
-                            const link = e.target.closest('a');
-                            if (link && link.href) {
-                                try {
-                                    const url = new URL(link.href, targetOrigin);
-                                    if (url.origin === targetOrigin || url.origin === window.location.origin) {
-                                        e.preventDefault();
-                                        window.location.href = '/proxy?url=' + encodeURIComponent(url.href);
-                                    }
-                                } catch (err) {
-                                    console.warn('URL parsing error:', err);
-                                }
-                            }
-                        });
-                        
-                        // Handle form submissions
-                        document.addEventListener('submit', function(e) {
-                            const form = e.target;
-                            if (form.action) {
-                                try {
-                                    const url = new URL(form.action, targetOrigin);
-                                    if (url.origin === targetOrigin) {
-                                        e.preventDefault();
-                                        const formData = new FormData(form);
-                                        const params = new URLSearchParams(formData);
-                                        window.location.href = '/proxy?url=' + encodeURIComponent(url.href + '?' + params.toString());
-                                    }
-                                } catch (err) {
-                                    console.warn('Form action parsing error:', err);
-                                }
-                            }
-                        });
-                        
-                        // Remove X-Frame-Options if present
-                        if (window.top !== window.self) {
-                            try {
-                                Object.defineProperty(document, 'domain', {
-                                    get: function() { return window.location.hostname; },
-                                    set: function() {}
-                                });
-                            } catch (e) {}
-                        }
-                    })();
-                </script>
-                </head>
-            `);
+      );
+      
+      // Add base tag and proxy navigation script
+      html = html.replace(/<head[^>]*>/i, `$&<base href="${base}/">`);
+      
+      // Inject AdBlock
+      html = injectAdBlock(html);
+      
+      // Add proxy navigation handler
+      const proxyScript = `<script>
+        document.addEventListener('click', e => {
+          const a = e.target.closest('a');
+          if (a && a.href) {
+            e.preventDefault();
+            location.href = '/proxy?url=' + encodeURIComponent(a.href);
+          }
+        });
+        document.addEventListener('submit', e => {
+          const f = e.target;
+          if (f.action) {
+            e.preventDefault();
+            const data = new FormData(f);
+            location.href = '/proxy?url=' + encodeURIComponent(f.action + '?' + new URLSearchParams(data));
+          }
+        });
+      </script>`;
+      html = html.replace('</body>', `${proxyScript}</body>`);
+      
+      return new Response(html, {
+        headers: {
+          'Content-Type': 'text/html',
+          'Access-Control-Allow-Origin': '*',
+          'X-Frame-Options': 'ALLOWALL',
+          'Content-Security-Policy': "frame-ancestors *;"
         }
-        
-        return new Response(body, {
-            status: response.status,
-            headers: {
-                'Content-Type': contentType,
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
-                'Access-Control-Allow-Headers': '*',
-                'X-Content-Type-Options': 'nosniff',
-                'X-Frame-Options': 'ALLOWALL',
-                'Content-Security-Policy': "frame-ancestors *;",
-            }
-        });
-        
-    } catch (error) {
-        console.error('Proxy error:', error);
-        return new Response(JSON.stringify({ 
-            error: 'Proxy service temporarily unavailable',
-            details: error.message 
-        }), {
-            status: 503,
-            headers: { 'Content-Type': 'application/json' }
-        });
+      });
     }
+    
+    // Handle non-HTML content (images, CSS, JS, etc.)
+    const body = await res.arrayBuffer();
+    const headers = {};
+    for (const [key, value] of res.headers.entries()) {
+      if (!key.toLowerCase().includes('content-security-policy') && 
+          !key.toLowerCase().includes('x-frame-options')) {
+        headers[key] = value;
+      }
+    }
+    
+    return new Response(body, {
+      status: res.status,
+      headers
+    });
+    
+  } catch (err) {
+    console.error('Proxy error:', err);
+    return new Response(JSON.stringify({error: 'Proxy failed'}), {
+      status: 503,
+      headers: {'Content-Type': 'application/json'}
+    });
+  }
 }
