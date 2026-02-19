@@ -1,7 +1,7 @@
 import { handleRequest } from './functions/proxy.js';
 
-export default {
-  async fetch(request, env, ctx) {
+export async function onRequest({ request, env, ctx })
+
     return handleRequest(request, env, ctx);
   }
 };
