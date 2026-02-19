@@ -1,130 +1,132 @@
-const AD_RULES = [
-  'doubleclick.net', 'googlesyndication.com', 'google-analytics.com',
-  'facebook.com/tr', 'amazon-adsystem.com', 'taboola.com', 'outbrain.com',
-  '.ad', '.ads', '.advertisement', '#ad', '#ads', '[data-ad]', '/ads/', '/tracking'
+const AD_DOMAINS = [
+  "doubleclick.net",
+  "googlesyndication.com",
+  "google-analytics.com",
+  "facebook.com/tr",
+  "amazon-adsystem.com",
+  "taboola.com",
+  "outbrain.com",
+  "adservice.google.com",
+  "adnxs.com",
+  "scorecardresearch.com"
 ];
 
-function shouldBlock(url) {
+const AD_SELECTORS = [
+  ".ad", ".ads", ".advertisement", ".sponsor", "#ad", "#ads",
+  "[data-ad]", "[data-ads]", "[data-advertisement]",
+  "iframe[src*='ad']", "iframe[src*='ads']"
+];
+
+function isAdDomain(url) {
   try {
-    const domain = new URL(url).hostname.toLowerCase();
-    return AD_RULES.some(rule => domain.includes(rule) || url.toLowerCase().includes(rule));
-  } catch { return false; }
+    const host = new URL(url).hostname;
+    return AD_DOMAINS.some(d => host.includes(d));
+  } catch {
+    return false;
+  }
 }
 
 function injectAdBlock(html) {
-  const css = `<style>${AD_RULES.join(',')} {display:none!important;}</style>`;
-  const js = `<script>
-    const adSelectors = ${JSON.stringify(AD_RULES)};
-    new MutationObserver(() => 
-      document.querySelectorAll(adSelectors.join(',')).forEach(el => el.remove())
-    ).observe(document, {childList:true,subtree:true});
-    document.querySelectorAll(adSelectors.join(',')).forEach(el => el.remove());
-  </script>`;
-  return html.replace(/<head>/i, `$&${css}`).replace('</body>', `${js}</body>`);
+  const css = `
+    <style>
+      ${AD_SELECTORS.join(", ")} {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+      }
+    </style>
+  `;
+
+  const js = `
+    <script>
+      const adSelectors = ${JSON.stringify(AD_SELECTORS)};
+      const removeAds = () => {
+        document.querySelectorAll(adSelectors.join(",")).forEach(el => el.remove());
+      };
+      removeAds();
+      new MutationObserver(removeAds).observe(document, { childList: true, subtree: true });
+    </script>
+  `;
+
+  return html
+    .replace(/<head[^>]*>/i, match => match + css)
+    .replace("</body>", js + "</body>");
 }
 
-export async function onRequest({ request, env, ctx }) {
+export async function onRequest({ request }) {
   const url = new URL(request.url);
+  const target = url.searchParams.get("url");
 
-  // Only handle /proxy
-  if (!url.pathname.startsWith('/proxy')) {
-    return new Response('Static file not found', { status: 404 });
+  if (!target) {
+    return new Response("Missing ?url=", { status: 400 });
   }
 
-  const target = url.searchParams.get('url');
-
-  if (!target) return new Response('Missing URL', { status: 400 });
-  if (shouldBlock(target)) return new Response('Blocked', { status: 204 });
+  if (isAdDomain(target)) {
+    return new Response("Blocked", { status: 204 });
+  }
 
   try {
-    const res = await fetch(target, {
+    const upstream = await fetch(target, {
+      redirect: "follow",
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "*/*"
       }
     });
 
-    if (!res.ok) return new Response(`Error ${res.status}`, { status: res.status });
+    const contentType = upstream.headers.get("content-type") || "";
 
-    const contentType = res.headers.get('content-type') || '';
-
-    // HTML handling
-    if (contentType.includes('text/html')) {
-      let html = await res.text();
+    if (contentType.includes("text/html")) {
+      let html = await upstream.text();
       const base = new URL(target).origin;
 
-      // Rewrite relative URLs
+      // Fix relative URLs
       html = html.replace(
-        /(href|src|action|srcset|data-src)=["']([^"']+)["']/g,
+        /(href|src)=["']([^"']+)["']/g,
         (match, attr, value) => {
-          if (value.startsWith('http') || value.startsWith('//') || value.startsWith('data:')) {
+          if (value.startsWith("http") || value.startsWith("//") || value.startsWith("data:")) {
             return match;
           }
-          return `${attr}="${base}${value.startsWith('/') ? '' : '/'}${value}"`;
+          return `${attr}="${base}${value.startsWith("/") ? "" : "/"}${value}"`;
         }
       );
 
-      // Add base tag
-      html = html.replace(/<head[^>]*>/i, `$&<base href="${base}/">`);
+      // Add <base>
+      html = html.replace(/<head[^>]*>/i, m => `${m}<base href="${base}/">`);
 
       // Inject adblock
       html = injectAdBlock(html);
 
-      // Proxy navigation script
-      const proxyScript = `<script>
-        document.addEventListener('click', e => {
-          const a = e.target.closest('a');
-          if (a && a.href) {
-            e.preventDefault();
-            location.href = '/proxy?url=' + encodeURIComponent(a.href);
-          }
-        });
-        document.addEventListener('submit', e => {
-          const f = e.target;
-          if (f.action) {
-            e.preventDefault();
-            const data = new FormData(f);
-            location.href = '/proxy?url=' + encodeURIComponent(f.action + '?' + new URLSearchParams(data));
-          }
-        });
-      </script>`;
-      html = html.replace('</body>', `${proxyScript}</body>`);
+      // Proxy navigation
+      html += `
+        <script>
+          document.addEventListener("click", e => {
+            const a = e.target.closest("a");
+            if (a && a.href) {
+              e.preventDefault();
+              location.href = "/proxy?url=" + encodeURIComponent(a.href);
+            }
+          });
+        </script>
+      `;
 
       return new Response(html, {
         headers: {
-          'Content-Type': 'text/html',
-          'Access-Control-Allow-Origin': '*',
-          'X-Frame-Options': 'ALLOWALL',
-          'Content-Security-Policy': 'frame-ancestors *;'
+          "Content-Type": "text/html",
+          "Access-Control-Allow-Origin": "*",
+          "X-Frame-Options": "ALLOWALL",
+          "Content-Security-Policy": "frame-ancestors *"
         }
       });
     }
 
-    // Non-HTML content
-    const body = await res.arrayBuffer();
-    const headers = {};
-    for (const [key, value] of res.headers.entries()) {
-      if (!key.toLowerCase().includes('content-security-policy') &&
-          !key.toLowerCase().includes('x-frame-options')) {
-        headers[key] = value;
-      }
-    }
-
-    return new Response(body, {
-      status: res.status,
-      headers
+    // Non‑HTML passthrough
+    return new Response(await upstream.arrayBuffer(), {
+      status: upstream.status,
+      headers: upstream.headers
     });
 
   } catch (err) {
-    console.error('Proxy error:', err);
-    return new Response(JSON.stringify({ error: 'Proxy failed' }), {
-      status: 503,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response("Proxy error: " + err.message, { status: 500 });
   }
 }
